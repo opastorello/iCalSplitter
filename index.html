@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>iCal(.ics) Splitter</title>
+        <style>
+            .margin {
+                margin-bottom: 10px;
+            }
+        </style>
+        <script async src="https://www.googletagmanager.com/gtag/js?id=G-GQKXJW0F66"></script>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous">
+    </head>
+    <body>
+        <div class="container">
+            <h1>iCal(.ics) Splitter</h1>
+            <p>
+                Esta ferramenta divide arquivos .ics para facilitar a importação no Google Calendar, que possui um limite de eventos. 
+                Nada é enviado ao servidor, assim seus dados permanecem seguros (e os downloads são instantâneos!).
+            </p>
+            <div style="width:25%">
+                <label class="form-label">Selecione o arquivo .ics:</label>
+                <input type="file" id="fileChooser" accept=".ics" class="form-control margin">
+            </div>
+            
+            <label>Número de eventos por arquivo:</label>
+            <input type="number" id="splitInterval" name="splitInterval" min="1" max="10000" placeholder="Digite..." value="1000">
+            <br>
+            <button id="splitBtn" class="btn btn-primary margin">Dividir</button>
+            <br>
+            <div class="alert alert-danger" role="alert" style="display: none;" id="noFileAlert">
+                Nenhum arquivo selecionado!
+            </div>
+            <div id="suggestionMessage" class="alert alert-info margin" style="display: none;"></div>
+        </div>
+
+        <script>
+            const fileChooser = document.getElementById("fileChooser");
+            const splitBtn = document.getElementById("splitBtn");
+            const splitIntervalBox = document.getElementById("splitInterval");
+            const noFileAlert = document.getElementById("noFileAlert");
+            let totalEvents = 0;
+            let fileSizeBytes = 0;
+
+            fileChooser.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const text = e.target.result;
+                    totalEvents = (text.match(/BEGIN:VEVENT/g) || []).length;
+                    fileSizeBytes = file.size;
+                    
+                    if (totalEvents === 0) {
+                        showSuggestion("Erro: O arquivo não contém eventos.", true);
+                        splitIntervalBox.value = 1;
+                        return;
+                    }
+
+                    let suggested = calcularIntervaloSugerido();
+                    splitIntervalBox.value = suggested;
+                    showSuggestion(formatarMensagem(suggested));
+                };
+                reader.readAsText(file);
+            });
+
+            function calcularIntervaloSugerido() {
+                if (fileSizeBytes > 1048576) {
+                    return Math.max(Math.floor((1048576 * totalEvents) / fileSizeBytes), 1);
+                }
+                return totalEvents;
+            }
+
+            function formatarMensagem(suggested) {
+                if (fileSizeBytes > 1048576) {
+                    return `Sugerido: ${suggested} eventos por arquivo para manter cada arquivo abaixo de 1MB.`;
+                }
+                return `O arquivo é menor que 1MB. Sugerido usar ${suggested} eventos para um único arquivo.`;
+            }
+
+            function showSuggestion(message, isError = false) {
+                const suggestionMessage = document.getElementById('suggestionMessage');
+                suggestionMessage.style.display = 'block';
+                suggestionMessage.textContent = message;
+                suggestionMessage.className = `alert ${isError ? 'alert-danger' : 'alert-info'} margin`;
+            }
+
+            function dividirICS(data, intervalo) {
+                const porcoes = [];
+                let cabecalho = "";
+                const linhas = data.split(/\r?\n/);
+                let indicePorcao = 0;
+                let cabecalhoProcessado = false;
+                let dentroEvento = false;
+                let contadorEventos = 0;
+
+                for (let i = 0; i < linhas.length; i++) {
+                    const linha = linhas[i];
+                    
+                    if (linha === "BEGIN:VEVENT") {
+                        dentroEvento = true;
+                        cabecalhoProcessado = true;
+                        if (!porcoes[indicePorcao]) {
+                            porcoes[indicePorcao] = cabecalho;
+                        }
+                        contadorEventos++;
+                    }
+
+                    if (!cabecalhoProcessado) {
+                        cabecalho += linha + "\n";
+                    }
+
+                    if (cabecalhoProcessado && dentroEvento) {
+                        porcoes[indicePorcao] += linha + "\n";
+                    }
+
+                    if (linha === "END:VEVENT") {
+                        dentroEvento = false;
+                        if (contadorEventos % intervalo === 0 || linhas[i + 1] === "END:VCALENDAR") {
+                            porcoes[indicePorcao] += "END:VCALENDAR\n";
+                            indicePorcao++;
+                        }
+                    }
+                }
+                return porcoes.filter(p => p); // Remover porções vazias
+            }
+
+            function download(nomeArquivo, texto) {
+                const elemento = document.createElement('a');
+                elemento.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(texto));
+                elemento.setAttribute('download', nomeArquivo);
+                elemento.style.display = 'none';
+                document.body.appendChild(elemento);
+                elemento.click();
+                document.body.removeChild(elemento);
+            }
+
+            splitBtn.onclick = () => {
+                const arquivo = fileChooser.files[0];
+                if (!arquivo) {
+                    noFileAlert.style.display = 'block';
+                    return;
+                }
+                noFileAlert.style.display = 'none';
+
+                const reader = new FileReader();
+                reader.onload = function() {
+                    try {
+                        const ics = reader.result;
+                        const intervalo = parseInt(splitIntervalBox.value) || 1000;
+                        const partes = dividirICS(ics, intervalo);
+                        const nomeBase = arquivo.name.replace(/.ics$/, "");
+
+                        partes.forEach((conteudo, indice) => {
+                            download(`${nomeBase}_parte${indice + 1}.ics`, conteudo);
+                        });
+                    } catch (e) {
+                        showSuggestion("Erro ao processar o arquivo: " + e.message, true);
+                    }
+                };
+                reader.readAsText(arquivo);
+            };
+        </script>
+    </body>
+</html>
