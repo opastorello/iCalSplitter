@@ -38,103 +38,57 @@
             const splitBtn = document.getElementById("splitBtn");
             const splitIntervalBox = document.getElementById("splitInterval");
             const noFileAlert = document.getElementById("noFileAlert");
-            let totalEvents = 0;
-            let fileSizeBytes = 0;
-
-            fileChooser.addEventListener('change', function(e) {
-                const file = e.target.files[0];
-                if (!file) return;
-
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const text = e.target.result;
-                    totalEvents = (text.match(/BEGIN:VEVENT/g) || []).length;
-                    fileSizeBytes = file.size;
-                    
-                    if (totalEvents === 0) {
-                        showSuggestion("Erro: O arquivo não contém eventos.", true);
-                        splitIntervalBox.value = 1;
-                        return;
-                    }
-
-                    let suggested = calcularIntervaloSugerido();
-                    splitIntervalBox.value = suggested;
-                    showSuggestion(formatarMensagem(suggested));
-                };
-                reader.readAsText(file);
-            });
-
-            function calcularIntervaloSugerido() {
-                if (fileSizeBytes > 1048576) {
-                    return Math.max(Math.floor((1048576 * totalEvents) / fileSizeBytes), 1);
-                }
-                return totalEvents;
-            }
-
-            function formatarMensagem(suggested) {
-                if (fileSizeBytes > 1048576) {
-                    return `Sugerido: ${suggested} eventos por arquivo para manter cada arquivo abaixo de 1MB.`;
-                }
-                return `O arquivo é menor que 1MB. Sugerido usar ${suggested} eventos para um único arquivo.`;
-            }
-
-            function showSuggestion(message, isError = false) {
-                const suggestionMessage = document.getElementById('suggestionMessage');
-                suggestionMessage.style.display = 'block';
-                suggestionMessage.textContent = message;
-                suggestionMessage.className = `alert ${isError ? 'alert-danger' : 'alert-info'} margin`;
-            }
-
+        
             function dividirICS(data, intervalo) {
                 const porcoes = [];
                 let cabecalho = "";
-                const linhas = data.split(/\r?\n/);
-                let indicePorcao = 0;
-                let cabecalhoProcessado = false;
+                const eventos = [];
+                let eventoAtual = "";
                 let dentroEvento = false;
-                let contadorEventos = 0;
-
-                for (let i = 0; i < linhas.length; i++) {
-                    const linha = linhas[i];
-                    
-                    if (linha === "BEGIN:VEVENT") {
+        
+                const linhas = data.split(/\r?\n/);
+                for (let linha of linhas) {
+                    if (linha.startsWith("BEGIN:VEVENT")) {
                         dentroEvento = true;
-                        cabecalhoProcessado = true;
-                        if (!porcoes[indicePorcao]) {
-                            porcoes[indicePorcao] = cabecalho;
-                        }
-                        contadorEventos++;
-                    }
-
-                    if (!cabecalhoProcessado) {
+                        eventoAtual = linha + "\n";
+                    } else if (linha.startsWith("END:VEVENT")) {
+                        dentroEvento = false;
+                        eventoAtual += linha + "\n";
+                        eventos.push(eventoAtual);
+                    } else if (dentroEvento) {
+                        eventoAtual += linha + "\n";
+                    } else {
                         cabecalho += linha + "\n";
                     }
-
-                    if (cabecalhoProcessado && dentroEvento) {
-                        porcoes[indicePorcao] += linha + "\n";
-                    }
-
-                    if (linha === "END:VEVENT") {
-                        dentroEvento = false;
-                        if (contadorEventos % intervalo === 0 || linhas[i + 1] === "END:VCALENDAR") {
-                            porcoes[indicePorcao] += "END:VCALENDAR\n";
-                            indicePorcao++;
-                        }
+                }
+        
+                const eventosUnicos = new Map();
+                for (let evento of eventos) {
+                    const uidMatch = evento.match(/UID:(.+)/);
+                    if (uidMatch) {
+                        eventosUnicos.set(uidMatch[1], evento);
                     }
                 }
-                return porcoes.filter(p => p); // Remover porções vazias
+        
+                const eventosFinal = Array.from(eventosUnicos.values());
+                for (let i = 0; i < eventosFinal.length; i += intervalo) {
+                    let chunk = cabecalho;
+                    chunk += eventosFinal.slice(i, i + intervalo).join("") + "\nEND:VCALENDAR";
+                    porcoes.push(chunk);
+                }
+        
+                return porcoes;
             }
-
+        
             function download(nomeArquivo, texto) {
                 const elemento = document.createElement('a');
                 elemento.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(texto));
                 elemento.setAttribute('download', nomeArquivo);
-                elemento.style.display = 'none';
                 document.body.appendChild(elemento);
                 elemento.click();
                 document.body.removeChild(elemento);
             }
-
+        
             splitBtn.onclick = () => {
                 const arquivo = fileChooser.files[0];
                 if (!arquivo) {
@@ -142,7 +96,7 @@
                     return;
                 }
                 noFileAlert.style.display = 'none';
-
+        
                 const reader = new FileReader();
                 reader.onload = function() {
                     try {
@@ -150,16 +104,17 @@
                         const intervalo = parseInt(splitIntervalBox.value) || 1000;
                         const partes = dividirICS(ics, intervalo);
                         const nomeBase = arquivo.name.replace(/.ics$/, "");
-
+        
                         partes.forEach((conteudo, indice) => {
                             download(`${nomeBase}_parte${indice + 1}.ics`, conteudo);
                         });
                     } catch (e) {
-                        showSuggestion("Erro ao processar o arquivo: " + e.message, true);
+                        alert("Erro ao processar o arquivo: " + e.message);
                     }
                 };
                 reader.readAsText(arquivo);
             };
         </script>
+
     </body>
 </html>
